@@ -1,37 +1,28 @@
-from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.utilities import SerpAPIWrapper
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from langchain_community.tools import Tool
-from langchain_community.document_loaders import DirectoryLoader
 from langchain.memory import ConversationBufferMemory
-from langchain.agents import create_openai_functions_agent, OpenAIFunctionsAgent, create_tool_calling_agent
+from langchain.agents import create_openai_functions_agent, OpenAIFunctionsAgent
 from langchain.schema import SystemMessage
 from langchain.prompts import MessagesPlaceholder
 from langchain.agents import AgentExecutor
 from langchain.chains import RetrievalQA
-from langchain_groq import ChatGroq
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain import hub
 import env
 import os
 import sys
+from langchain_pinecone import PineconeVectorStore
 
 os.environ["OPENAI_API_KEY"] = env.OPENAI_API_KEY
-
-loader_dic = DirectoryLoader("data/")
-data = loader_dic.load()
-
-text_splitter = RecursiveCharacterTextSplitter()
-splits = text_splitter.split_documents(data)
-
-embedding = OpenAIEmbeddings(openai_api_key=os.environ["OPENAI_API_KEY"])
-vectordb = Chroma.from_documents(
-    documents=splits, embedding=embedding, collection_name="general_info_tool"
-)
+os.environ["PINECONE_API_KEY"] = env.PINECONE_API_KEY
+os.environ["PINECONE_ENV"] = env.PINECONE_ENV
 
 llm = ChatOpenAI(model="gpt-3.5-turbo",temperature=0, openai_api_key=os.environ["OPENAI_API_KEY"])
+
+embedding = OpenAIEmbeddings(openai_api_key=os.environ["OPENAI_API_KEY"])
+
+index_name = "orsobo"
+vectordb = PineconeVectorStore.from_existing_index(index_name, embedding)
 
 general_info = RetrievalQA.from_chain_type(
     llm=llm, chain_type="stuff", retriever=vectordb.as_retriever()
@@ -42,7 +33,6 @@ general_info_tool = Tool(
     func=general_info.run,
     description="usa questo strumento per rispondere a tutte le domande sull' Albergo dell'Orso Bo come per esempio soggiorno, arrivi, camere, animazione, parcheggio ed altro.",
 )
-
 
 def create_quote_tool_function(*args, **kwargs):
     return "https://www.orso-bo.it/quote/"    
@@ -73,7 +63,7 @@ prompt = OpenAIFunctionsAgent.create_prompt(
 
 tools = [general_info_tool, create_quote_tool]
 
-agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
+agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
 
 agent_executor = AgentExecutor(
     agent=agent, 
@@ -92,8 +82,7 @@ while True:
         prompt = input("\033[31m\r\nPrompt: \033[0m")
     if prompt in ['quit', 'q', 'exit']:
         sys.exit()
-
-    #print(agent.run(prompt))
+    
     result = agent_executor.invoke(
         {
             "input": prompt,
