@@ -1,100 +1,56 @@
-# used to load text
-from langchain.vectorstores import Chroma
-
-# used to create the retriever
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.utilities import SerpAPIWrapper
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.utilities import SerpAPIWrapper
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# used to create the retrieval tool
-from langchain.tools import Tool
-
-from langchain.document_loaders import DirectoryLoader, TextLoader
-
-# used to create the memory
+from langchain_openai import ChatOpenAI
+from langchain_community.tools import Tool
+from langchain_community.document_loaders import DirectoryLoader
 from langchain.memory import ConversationBufferMemory
-
-# used to create the prompt template
-from langchain.agents.openai_functions_agent.base import OpenAIFunctionsAgent
+from langchain.agents import create_openai_functions_agent, OpenAIFunctionsAgent
 from langchain.schema import SystemMessage
 from langchain.prompts import MessagesPlaceholder
-
-# used to create the agent executor
-from langchain.chat_models import ChatOpenAI
 from langchain.agents import AgentExecutor
-
 from langchain.chains import RetrievalQA
-
-
+from langchain_groq import ChatGroq
+from langchain import hub
 import env
 import os
 import sys
 
-os.environ["OPENAI_API_KEY"] = env.OPENAI_APIKEY
-os.environ["SERPAPI_API_KEY"] = env.SERPAPI_APIKEY
+os.environ["OPENAI_API_KEY"] = env.OPENAI_API_KEY
 
-
-"""
-In this section, we're setting up our personal data Database 
-by using OpenAIEmbeddings, ChromaDB and Langcahin Tool
-"""
-
-# Use this line if you want to load all data under data/ dir
 loader_dic = DirectoryLoader("data/")
-#loader_dic = TextLoader("data/data.txt")
 data = loader_dic.load()
 
-# Split
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=10)
+text_splitter = RecursiveCharacterTextSplitter()
 splits = text_splitter.split_documents(data)
 
-# VectorDB
 embedding = OpenAIEmbeddings(openai_api_key=os.environ["OPENAI_API_KEY"])
 vectordb = Chroma.from_documents(
-    documents=splits, embedding=embedding, collection_name="personal-data"
+    documents=splits, embedding=embedding, collection_name="general_info_tool"
 )
 
-llm = ChatOpenAI(temperature=0, openai_api_key=os.environ["OPENAI_API_KEY"])
+llm = ChatOpenAI(model="gpt-3.5-turbo",temperature=0, openai_api_key=os.environ["OPENAI_API_KEY"])
 
-personal_data = RetrievalQA.from_chain_type(
+general_info = RetrievalQA.from_chain_type(
     llm=llm, chain_type="stuff", retriever=vectordb.as_retriever()
 )
 
-personal_data_tool = Tool(
-    name="PersoanlData",
-    func=personal_data.run,
-    description="useful for when you need to answer questions about personal-data. Input should be a fully formed question.",
+general_info_tool = Tool(
+    name="general_info_tool",
+    func=general_info.run,
+    description="usa questo strumento per rispondere a tutte le domande sull' Albergo dell'Orso Bo come per esempio soggiorno, arrivi, camere, animazione, parcheggio ed altro.",
 )
 
-"""
-In this section, we're setting up our Google search agent SerpAPI
-So we gonna have access to the Internet
-"""
-
-search = SerpAPIWrapper()
-
-serpapi_tool = Tool(
-    name="Search",
-    func=search.run,
-    description="useful for when you need to answer questions about current events",
-)
-
-
-"""
-In this section, we're setting up our Agent Memory and defined 
-our agent default prompt.
-"""
-
-# setting up memory 
-memory_key = "history"
+memory_key = "chat_history"
 memory = ConversationBufferMemory(memory_key=memory_key, return_messages=True)
 
-# setting default promp
+# setting default prompt
 system_message = SystemMessage(
     content=(
-        "Do your best to answer the questions. "
-        "Feel free to use any tools available to look up "
-        "relevant information, only if neccessary"
+        "Tu sei l'assistente dell'Albergo dell'Orso Bo e dovrai rispondere alle domande che i clienti ti faranno riguardanti la struttura. \
+        Rispondi solo se il contenuto della tua risposta viene dallo strumento 'general_info_tool', altrimenti non rispondere e non invertarti MAI nulla. \
+        Se non trovi la risposta rispondi di contattare giuliana al numero +3956465161. IMPORTANTE!! Non ti inventare MAI niente."        
     )
 )
 
@@ -103,35 +59,17 @@ prompt = OpenAIFunctionsAgent.create_prompt(
     extra_prompt_messages=[MessagesPlaceholder(variable_name=memory_key)]
 )
 
-"""
-In this section, we're initiating our agent and agent_executor
-the combine all of our tools, momery, agent, llm etc...
-"""
+tools = [general_info_tool]
 
-tools = [serpapi_tool, personal_data_tool]
-
-agent = OpenAIFunctionsAgent(llm=llm, tools=tools, prompt=prompt)
-
-
-# agent = initialize_agent(
-#     tools=tools,
-#     agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-#     llm=llm,
-#     verbose=True,
-#     handle_parsing_errors=True
-# )
-
+agent = create_openai_functions_agent(llm=llm, tools=tools, prompt=prompt)
 
 agent_executor = AgentExecutor(
     agent=agent, 
-    tools=tools, 
-    memory=memory, 
-    verbose=True, 
-    handle_parsing_errors=True
+    tools=tools,     
+    verbose=True,    
+    memory=memory,   
 )
 
-# Run first encounter with our agent
-result = agent_executor({"input": "Hey, Are you ready for work?"})
 
 prompt = None
 
@@ -145,6 +83,6 @@ while True:
         sys.exit()
 
     #print(agent.run(prompt))
-    agent_executor({"input": prompt})
-    #print(result["output"])
+    result = agent_executor.invoke({"input": prompt})
+    print(result["output"])
     prompt = None
